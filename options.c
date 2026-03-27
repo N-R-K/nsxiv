@@ -39,12 +39,13 @@
 
 const opt_t *options;
 
-void print_usage(void)
+void print_usage(FILE *stream)
 {
-	printf("usage: %s [-abcfhiopqrtvZ0] [-A FRAMERATE] [-e WID] [-G GAMMA] "
-	       "[-g GEOMETRY] [-N NAME] [-n NUM] [-S DELAY] [-s MODE] "
-	       "[-z ZOOM] FILES...\n",
-	       progname);
+	fprintf(stream,
+	        "usage: %s [-abcfHhiopqrtvZ0] [-A FRAMERATE] [-e WID] [-G GAMMA] "
+	        "[-g GEOMETRY] [-N NAME] [-n NUM] [-S DELAY] [-s MODE] "
+	        "[-z ZOOM] FILES...\n",
+	        progname);
 }
 
 static void print_version(void)
@@ -60,10 +61,15 @@ static void print_version(void)
 #if HAVE_LIBEXIF
 		"+exif "
 #endif
-#if HAVE_IMLIB2_MULTI_FRAME
 		"+multiframe "
-#endif
 		"\n", stdout);
+}
+
+static bool parse_optional_no(const char *flag, const char *arg)
+{
+	if (arg != NULL && !STREQ(arg, "no"))
+		error(EXIT_FAILURE, 0, "Invalid argument for option --%s: %s", flag, arg);
+	return arg == NULL;
 }
 
 void parse_options(int argc, char **argv)
@@ -75,20 +81,33 @@ void parse_options(int argc, char **argv)
 		OPT_START = UCHAR_MAX,
 		OPT_AA,
 		OPT_AL,
-		OPT_BG
+		OPT_THUMB,
+		OPT_BAR,
+		OPT_CLASS,
+		OPT_CA,
+		OPT_CD,
+		OPT_UC,
+		OPT_HIDDEN,
+		OPT_AF
 	};
 	static const struct optparse_long longopts[] = {
 		{ "framerate",      'A',     OPTPARSE_REQUIRED },
 		{ "animate",        'a',     OPTPARSE_NONE },
+		{ "assume-files",  OPT_AF,   OPTPARSE_NONE },
 		{ "no-bar",         'b',     OPTPARSE_NONE },
+		{ "bar",          OPT_BAR,   OPTPARSE_NONE },
 		{ "clean-cache",    'c',     OPTPARSE_NONE },
 		{ "embed",          'e',     OPTPARSE_REQUIRED },
 		{ "fullscreen",     'f',     OPTPARSE_NONE },
 		{ "gamma",          'G',     OPTPARSE_REQUIRED },
 		{ "geometry",       'g',     OPTPARSE_REQUIRED },
+		/* short opt `-H` doesn't accept optional arg to allow chaining (e.g `-Hr`) */
+		{ NULL,             'H',     OPTPARSE_NONE },
+		{ "hidden",      OPT_HIDDEN, OPTPARSE_OPTIONAL },
 		{ "help",           'h',     OPTPARSE_NONE },
 		{ "stdin",          'i',     OPTPARSE_NONE },
-		{ "class",          'N',     OPTPARSE_REQUIRED },
+		{ "name",           'N',     OPTPARSE_REQUIRED },
+		{ "class",       OPT_CLASS,  OPTPARSE_REQUIRED },
 		{ "start-at",       'n',     OPTPARSE_REQUIRED },
 		{ "stdout",         'o',     OPTPARSE_NONE },
 		{ "private",        'p',     OPTPARSE_NONE },
@@ -96,15 +115,18 @@ void parse_options(int argc, char **argv)
 		{ "recursive",      'r',     OPTPARSE_NONE },
 		{ "ss-delay",       'S',     OPTPARSE_REQUIRED },
 		{ "scale-mode",     's',     OPTPARSE_REQUIRED },
-		{ "thumbnail",      't',     OPTPARSE_NONE },
+		/* short opt `-t` doesn't accept optional arg for backwards compatibility reasons */
+		{ NULL,             't',     OPTPARSE_NONE },
+		{ "thumbnail",   OPT_THUMB,  OPTPARSE_OPTIONAL },
 		{ "version",        'v',     OPTPARSE_NONE },
 		{ "zoom-100",       'Z',     OPTPARSE_NONE },
 		{ "zoom",           'z',     OPTPARSE_REQUIRED },
 		{ "null",           '0',     OPTPARSE_NONE },
 		{ "anti-alias",    OPT_AA,   OPTPARSE_OPTIONAL },
 		{ "alpha-layer",   OPT_AL,   OPTPARSE_OPTIONAL },
-		/* TODO: document this when it's stable */
-		{ "bg-cache",      OPT_BG,   OPTPARSE_OPTIONAL },
+		{ "cache-allow",   OPT_CA,   OPTPARSE_REQUIRED },
+		{ "cache-deny",    OPT_CD,   OPTPARSE_REQUIRED },
+		{ "update-cache",  OPT_UC,   OPTPARSE_NONE },
 		{ 0 }, /* end */
 	};
 
@@ -120,7 +142,9 @@ void parse_options(int argc, char **argv)
 	_options.to_stdout = false;
 	_options.using_null = false;
 	_options.recursive = false;
+	_options.include_hidden = false;
 	_options.startnum = 0;
+	_options.assume_files = false;
 
 	_options.scalemode = SCALE_DOWN;
 	_options.zoom = 1.0;
@@ -137,11 +161,13 @@ void parse_options(int argc, char **argv)
 	_options.geometry = NULL;
 	_options.res_name = NULL;
 
+	_options.tns_filters = TNS_FILTERS;
+	_options.tns_filters_is_blacklist = TNS_FILTERS_IS_BLACKLIST;
 	_options.quiet = false;
 	_options.thumb_mode = false;
 	_options.clean_cache = false;
+	_options.update_cache = false;
 	_options.private_mode = false;
-	_options.background_cache = false;
 
 	if (argc > 0) {
 		s = strrchr(argv[0], '/');
@@ -157,19 +183,23 @@ void parse_options(int argc, char **argv)
 		switch (opt) {
 		case '?':
 			fprintf(stderr, "%s\n", op.errmsg);
-			print_usage();
+			print_usage(stderr);
 			exit(EXIT_FAILURE);
 		case 'A':
 			n = strtol(op.optarg, &end, 0);
-			if (*end != '\0' || n <= 0 || n > INT_MAX)
+			if (*end != '\0' || n < 0 || n > INT_MAX)
 				error(EXIT_FAILURE, 0, "Invalid framerate: %s", op.optarg);
 			_options.framerate = n;
-			/* fall through */
+			_options.animate = n > 0;
+			break;
 		case 'a':
 			_options.animate = true;
 			break;
-		case 'b':
-			_options.hide_bar = true;
+		case OPT_AF:
+			_options.assume_files = true;
+			break;
+		case 'b': case OPT_BAR:
+			_options.hide_bar = (opt == 'b');
 			break;
 		case 'c':
 			_options.clean_cache = true;
@@ -192,8 +222,11 @@ void parse_options(int argc, char **argv)
 		case 'g':
 			_options.geometry = op.optarg;
 			break;
+		case 'H': case OPT_HIDDEN:
+			_options.include_hidden = (opt == 'H') || parse_optional_no("hidden", op.optarg);
+			break;
 		case 'h':
-			print_usage();
+			print_usage(stdout);
 			exit(EXIT_SUCCESS);
 		case 'i':
 			_options.from_stdin = true;
@@ -204,6 +237,9 @@ void parse_options(int argc, char **argv)
 				error(EXIT_FAILURE, 0, "Invalid starting number: %s", op.optarg);
 			_options.startnum = n - 1;
 			break;
+		case OPT_CLASS:
+			error(0, 0, "--class is deprecated, use --name instead");
+			/* fallthrough */
 		case 'N':
 			_options.res_name = op.optarg;
 			break;
@@ -252,19 +288,20 @@ void parse_options(int argc, char **argv)
 			_options.using_null = true;
 			break;
 		case OPT_AA:
-			if (op.optarg != NULL && !STREQ(op.optarg, "no"))
-				error(EXIT_FAILURE, 0, "Invalid argument for option --anti-alias: %s", op.optarg);
-			_options.anti_alias = op.optarg == NULL;
+			_options.anti_alias = parse_optional_no("anti-alias", op.optarg);
 			break;
 		case OPT_AL:
-			if (op.optarg != NULL && !STREQ(op.optarg, "no"))
-				error(EXIT_FAILURE, 0, "Invalid argument for option --alpha-layer: %s", op.optarg);
-			_options.alpha_layer = op.optarg == NULL;
+			_options.alpha_layer = parse_optional_no("alpha-layer", op.optarg);
 			break;
-		case OPT_BG:
-			if (op.optarg != NULL && !STREQ(op.optarg, "no"))
-				error(EXIT_FAILURE, 0, "Invalid argument for option --bg-cache: %s", op.optarg);
-			_options.background_cache = op.optarg == NULL;
+		case OPT_THUMB:
+			_options.thumb_mode = parse_optional_no("thumbnail", op.optarg);
+			break;
+		case OPT_CA: case OPT_CD:
+			_options.tns_filters = op.optarg;
+			_options.tns_filters_is_blacklist = (opt == OPT_CD);
+			break;
+		case OPT_UC:
+			_options.update_cache = true;
 			break;
 		}
 	}

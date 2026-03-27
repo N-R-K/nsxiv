@@ -14,18 +14,20 @@ interface and adding simple, sensible features. nsxiv is free software licensed
 under GPL-2.0-or-later and aims to be easy to modify and customize.
 
 Please file a bug report if something does not work as documented or expected on
-[Codeberg] after making sure you are using the latest release. Contributions
-are welcome, see [CONTRIBUTING] to get started.
+[Codeberg] after making sure you are using the latest release. If you're looking
+to migrate from `sxiv`, see [MIGRATION]. Contributions are welcome, see
+[CONTRIBUTING] to get started.
 
 [Codeberg]: https://codeberg.org/nsxiv/nsxiv/issues/new
 [CONTRIBUTING]: etc/CONTRIBUTING.md#contribution-guideline
+[MIGRATION]: etc/MIGRATION.md
 
 
 Features
 --------
 
 * Basic image operations like zooming, panning, rotating
-* Basic support for animated/multi-frame images (**requires Imlib2 v1.8.0 or above**)
+* Basic support for animated/multi-frame images
 * Thumbnail mode: grid of selectable previews of all images
 * Ability to cache thumbnails for fast re-loading
 * Automatically refreshing modified images
@@ -65,7 +67,7 @@ Dependencies
 nsxiv requires the following software to be installed:
 
   * X11
-  * Imlib2 (built with X11 support)
+  * Imlib2 (version 1.11 or later, built with X11 support)
 
 The following dependencies are optional:
 
